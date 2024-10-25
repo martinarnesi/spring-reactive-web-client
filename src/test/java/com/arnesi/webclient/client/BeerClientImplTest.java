@@ -8,6 +8,8 @@ import com.arnesi.webclient.model.BeerDto;
 import com.arnesi.webclient.model.BeerPagedList;
 import java.math.BigDecimal;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
@@ -138,7 +140,43 @@ class BeerClientImplTest {
     assertThat(responseEntity.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
   }
 
+  /**
+   * Key Points about this test:
+   * 1. It's testing a reactive flow using Project Reactor
+   * 2. Uses AtomicReference to safely store the beer name across async operations
+   * 3. Uses CountDownLatch to handle asynchronous test completion
+   * 4. Makes two assertions: one in the reactive chain and one after completion
+   * 5. Tests the full flow of listing beers and then getting a specific beer
+   *
+   * Common use cases for this pattern:
+   * - Testing reactive APIs
+   * - Verifying async operations
+   * - Testing data transformations in reactive streams
+   */
   @Test
-  void getBeerByUpc() {
+  void functionalTestGetBeerById() throws InterruptedException {
+    // Creates an atomic reference to store the beer name safely across threads
+    AtomicReference<String> beerName = new AtomicReference<>();
+
+    // Creates a countdown latch to synchronize the async operation
+    // The latch is initialized with 1, meaning we'll wait for one operation to complete
+    CountDownLatch countDownLatch = new CountDownLatch(1);
+
+    beerClient.listBeers(null, null, null, null, null)  // Calls API to get list of beers
+        .map(beerPagedList -> beerPagedList.getContent().get(0).getId())  // Gets the ID of the first beer
+        .map(beerId -> beerClient.getBeerById(beerId, false))  // Uses that ID to fetch specific beer details
+        .flatMap(mono -> mono)  // Flattens the Mono response
+        .subscribe(beerDto -> {  // Subscribes to the result
+          System.out.println(beerDto.getBeerName());  // Prints the beer name
+          beerName.set(beerDto.getBeerName());  // Stores the beer name in atomic reference
+          assertThat(beerDto.getBeerName()).isEqualTo("Mango Bobs");  // Verifies beer name
+          countDownLatch.countDown();  // Signals that the async operation is complete
+        });
+
+    // Waits for the async operation to complete before proceeding
+    countDownLatch.await();
+
+    // Final verification that the stored beer name matches expected value
+    assertThat(beerName.get()).isEqualTo("Mango Bobs");
   }
 }
